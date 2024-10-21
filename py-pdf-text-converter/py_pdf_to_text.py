@@ -1,91 +1,130 @@
-import os
 import streamlit as st
-from PyPDF2 import PdfReader
-import pdfplumber
+import fitz  # PyMuPDF
+import pytesseract
+from pdf2image import convert_from_path
+from pdfminer.high_level import extract_text as extract_text_pdfminer
+from PIL import Image
+import re
+import os
 
-# Helper function to extract text from PDF
-def extract_text_from_pdf(pdf_path):
-    text = ""
+# OCR Setup: Ensure Tesseract is installed
+pytesseract.pytesseract.tesseract_cmd = r'/usr/local/bin/tesseract'  # Update this path for your Tesseract installation
+
+# Function to use PyMuPDF for text extraction
+def extract_text_pymupdf(pdf_file):
     try:
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
-                text += page.extract_text() + "\n"
+        pdf_document = fitz.open(stream=pdf_file.read(), filetype="pdf")
+        text = ""
+        for page_num in range(pdf_document.page_count):
+            page = pdf_document.load_page(page_num)
+            text += page.get_text("text")
+        return text
     except Exception as e:
-        st.error(f"Error reading {pdf_path}: {e}")
-    return text
+        st.error(f"Error extracting text using PyMuPDF: {str(e)}")
+        return None
 
-# Save text to a .txt file
-def save_text_to_file(text, output_file):
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write(text)
+# Function to use pdfminer.six for text extraction
+def extract_text_pdfminer_six(pdf_file):
+    try:
+        return extract_text_pdfminer(pdf_file)
+    except Exception as e:
+        st.error(f"Error extracting text using pdfminer.six: {str(e)}")
+        return None
 
-# Combine text files in the folder into one file
-def combine_text_files(folder_path, output_file):
-    combined_text = ""
-    for file in os.listdir(folder_path):
-        if file.endswith('.txt'):
-            file_path = os.path.join(folder_path, file)
-            with open(file_path, 'r', encoding='utf-8') as f:
-                combined_text += f.read() + "\n"
-    
-    save_text_to_file(combined_text, output_file)
-    return combined_text
-
-# Streamlit App
-st.sidebar.title("PDF to Text and Merging App")
-
-# Sidebar tabs
-tab_selection = st.sidebar.radio("Choose an action", ("PDF to Text Conversion", "Merge Text Files"))
-
-if tab_selection == "PDF to Text Conversion":
-    st.title('PDF to Text Converter')
-
-    # Step 1: Upload PDFs
-    st.header('Upload PDFs')
-    uploaded_files = st.file_uploader("Upload multiple PDF files", type=['pdf'], accept_multiple_files=True)
-
-    # Specify output folder for text files
-    output_folder = st.text_input("Specify the folder where text files will be saved", "output_texts")
-
-    # Convert PDFs to text files
-    if uploaded_files and st.button("Convert PDFs to Text"):
-        if not os.path.exists(output_folder):
-            os.makedirs(output_folder)
-
-        for uploaded_file in uploaded_files:
-            # Extract the text from the PDF
-            pdf_name = uploaded_file.name
-            text = extract_text_from_pdf(uploaded_file)
-            
-            # Save the extracted text to a .txt file with the same name as the PDF
-            output_file = os.path.join(output_folder, pdf_name.replace(".pdf", ".txt"))
-            save_text_to_file(text, output_file)
-            st.success(f"Text file created: {output_file}")
+# Function to use Tesseract OCR for scanned PDFs
+def extract_text_tesseract(pdf_file):
+    try:
+        # Save the uploaded file temporarily
+        with open("temp.pdf", "wb") as f:
+            f.write(pdf_file.read())
         
-        st.write("Conversion Complete!")
+        # Convert PDF pages to images and apply OCR
+        images = convert_from_path("temp.pdf")
+        extracted_text = []
+        for image in images:
+            text = pytesseract.image_to_string(image)
+            extracted_text.append(text)
+        
+        # Clean up the temporary file
+        os.remove("temp.pdf")
+        return "\n".join(extracted_text)
+    except Exception as e:
+        st.error(f"Error extracting text using Tesseract OCR: {str(e)}")
+        if os.path.exists("temp.pdf"):
+            os.remove("temp.pdf")
+        return None
 
-elif tab_selection == "Merge Text Files":
-    st.title('Merge Text Files')
-
-    # Step 2: Specify the folder containing text files to merge
-    st.header('Merge Text Files into One')
-
-    # Input folder containing text files
-    text_folder = st.text_input("Specify the folder where text files are located", "output_texts")
-
-    # Specify output folder for merged text file
-    merge_output_folder = st.text_input("Specify the folder where the merged file will be saved", "output_texts")
+# Function to verify extracted text for issues
+def verify_text(text):
+    issues = []
     
-    if st.button("Merge All Text Files"):
-        if os.path.exists(text_folder):
-            if not os.path.exists(merge_output_folder):
-                os.makedirs(merge_output_folder)
+    # Check for irregular whitespace
+    if re.search(r'\s{4,}', text):
+        issues.append("Irregular whitespace found.")
+    
+    # Check for broken lines
+    if re.search(r'\S\n\S', text):
+        issues.append("Broken lines detected.")
+    
+    # Check for empty lines or missing newlines
+    if not re.search(r'\n', text):
+        issues.append("Missing newlines.")
+    
+    return issues
 
-            # Merging text files
-            merge_output_file = os.path.join(merge_output_folder, "merged_file.txt")
-            combined_text = combine_text_files(text_folder, merge_output_file)
+# Streamlit app layout
+st.title("📄 PDF to Text Converter with Verification")
 
-            st.success(f"All text files have been merged into: {merge_output_file}")
-            st.text_area("Merged Text Content (Preview)", combined_text[:2000])  # Preview first 2000 characters
-        else:
-            st.warning(f"The folder '{text_folder}' does not exist. Please provide a valid folder.")
+st.write("Upload a PDF and choose an extraction method. Optionally, verify the extracted text for common formatting issues.")
+
+# Upload PDF file
+pdf_file = st.file_uploader("Upload a PDF file", type=["pdf"])
+
+# Select method for extraction
+method = st.selectbox("Choose the extraction method", 
+                      ["PyMuPDF", "pdfminer.six", "Tesseract OCR"])
+
+# Extract text and display/save it
+if pdf_file and st.button("Extract Text"):
+    st.info("Extracting text, please wait...")
+    extracted_text = ""
+
+    # Progress bar for extraction process
+    progress = st.progress(0)
+    if method == "PyMuPDF":
+        st.write("Using PyMuPDF for extraction...")
+        extracted_text = extract_text_pymupdf(pdf_file)
+        progress.progress(100)
+    elif method == "pdfminer.six":
+        st.write("Using pdfminer.six for extraction...")
+        extracted_text = extract_text_pdfminer_six(pdf_file)
+        progress.progress(100)
+    elif method == "Tesseract OCR":
+        st.write("Using Tesseract OCR for extraction...")
+        extracted_text = extract_text_tesseract(pdf_file)
+        progress.progress(100)
+
+    # Display extracted text
+    if extracted_text:
+        st.success("Text extraction successful!")
+        st.text_area("Extracted Text", extracted_text, height=300)
+
+        # Provide an option to download the extracted text
+        st.download_button(
+            label="Download as Text File",
+            data=extracted_text,
+            file_name="extracted_text.txt",
+            mime="text/plain",
+        )
+
+        # Add a verification step
+        if st.button("Verify Extracted Text"):
+            issues = verify_text(extracted_text)
+            if issues:
+                st.warning("Issues found in the extracted text:")
+                for issue in issues:
+                    st.write(f"- {issue}")
+            else:
+                st.success("No issues found in the extracted text!")
+    else:
+        st.error("No text extracted. Please check your file or method.")
