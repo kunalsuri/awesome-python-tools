@@ -3,7 +3,7 @@ import subprocess
 
 # Run Streamlit script using subprocess
 def run_streamlit():
-    streamlit_file = "pdf2text.py"
+    streamlit_file = "py_pdf_to_text.py"
     subprocess.Popen(["streamlit", "run", streamlit_file])
 
 if __name__ == "__main__":
