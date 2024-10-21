@@ -7,6 +7,9 @@ from PIL import Image
 import re
 import os
 
+# Programmatically clear Streamlit cache
+st.cache_data.clear()
+
 # OCR Setup: Ensure Tesseract is installed (Update the path if needed)
 pytesseract.pytesseract.tesseract_cmd = r'/usr/local/bin/tesseract'
 
@@ -92,7 +95,20 @@ def app_sidebar():
         ["PyMuPDF", "pdfminer.six", "Tesseract OCR"]
     )
 
-    # Additional Sidebar options
+    # Option to verify a selected text file
+    st.sidebar.subheader("Verify Extracted Text File")
+    selected_file = st.sidebar.file_uploader("Choose a text file for verification", type=["txt"])
+
+    if selected_file and st.sidebar.button("Verify Text"):
+        file_text = selected_file.read().decode("utf-8")
+        issues = verify_text(file_text)
+        if issues:
+            st.sidebar.warning("Issues found in the selected text:")
+            for issue in issues:
+                st.sidebar.write(f"- {issue}")
+        else:
+            st.sidebar.success("No issues found in the selected text!")
+
     st.sidebar.markdown("---")
     st.sidebar.markdown('📖 Open-source code and ReadMe available app via this [Github Repo](https://github.com/kunalsuri/)!')
 
@@ -136,23 +152,17 @@ def main():
             st.success("Text extraction successful!")
             st.text_area("Extracted Text", extracted_text, height=300)
 
-            # Provide an option to download the extracted text
+            # Save the extracted text with the same name as the PDF
+            pdf_name = os.path.splitext(pdf_file.name)[0]
+            text_filename = f"{pdf_name}.txt"
+
+            # Provide an option to download the extracted text with the same name as the PDF
             st.download_button(
-                label="Download as Text File",
+                label=f"Download as {text_filename}",
                 data=extracted_text,
-                file_name="extracted_text.txt",
+                file_name=text_filename,
                 mime="text/plain",
             )
-
-            # Add a verification step
-            if st.button("Verify Extracted Text"):
-                issues = verify_text(extracted_text)
-                if issues:
-                    st.warning("Issues found in the extracted text:")
-                    for issue in issues:
-                        st.write(f"- {issue}")
-                else:
-                    st.success("No issues found in the extracted text!")
         else:
             st.error("No text extracted. Please check your file or method.")
 
